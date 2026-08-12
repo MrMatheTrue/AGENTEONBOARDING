@@ -1,0 +1,16 @@
+target/
+*.class
+
+# IDEs
+.idea/
+*.iml
+.vscode/
+.settings/
+.classpath
+.project
+
+# Maven wrapper local
+.mvn/wrapper/maven-wrapper.jar
+
+# Sistema
+.DS_Store
