@@ -89,6 +89,19 @@ class AgentContextTest {
     }
 
     @Test
+    @DisplayName("plano novo tambem zera as tentativas, mas nao os replanejamentos")
+    void instalarNovoPlanoZeraRetryMasNaoReplan() {
+        AgentContext ctx = contextoComPlanoDeTresPassos();
+        ctx.recordRetry();
+        ctx.recordReplan();
+
+        ctx.installPlan(new Plan(List.of(passo(1, "gitStatus")), 0.8));
+
+        assertThat(ctx.retryCount()).as("passo novo, orcamento novo").isZero();
+        assertThat(ctx.replanCount()).as("e o replan que limita o ciclo").isEqualTo(1);
+    }
+
+    @Test
     void replanCountAcumulaAoLongoDaSessao() {
         AgentContext ctx = contextoComPlanoDeTresPassos();
 

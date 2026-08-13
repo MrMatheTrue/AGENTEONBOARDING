@@ -70,10 +70,16 @@ public class AgentContext {
      *
      * <p>Replanejar sempre reinicia o indice: o plano novo tem passos novos, e continuar
      * de onde parou apontaria para um passo que nao existe mais.</p>
+     *
+     * <p>Zera tambem o retryCount, pela mesma razao de {@link #advance()}: tentativa e por
+     * passo. O primeiro passo de um plano novo nao pode nascer sem direito a tentativa por
+     * causa do que o plano anterior gastou. O replanCount, esse sim, continua acumulando —
+     * e ele que limita o ciclo replanejar-falhar-replanejar.</p>
      */
     public void installPlan(Plan newPlan) {
         this.plan = Objects.requireNonNull(newPlan, "plan nao pode ser nulo");
         this.currentStepIndex = 0;
+        this.retryCount = 0;
     }
 
     public int currentStepIndex() {
