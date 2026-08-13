@@ -4,6 +4,14 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
+    <!--
+        CLAUDE.md pede "Spring Boot 3.3+"; usamos 3.4.5, que satisfaz o "+".
+        Motivo: o Spring AI 1.0.0 e construido e testado sobre a linha 3.4.x.
+        O 3.3.13 tambem funciona no scaffold da FASE 0 (verificado: contexto sobe e o
+        LlmGateway conversa com o servidor local), mas as fases seguintes usam muito
+        mais superficie do Spring AI - tool calling na FASE 4 e VectorStore na FASE 7 -
+        onde a linha suportada evita surpresa.
+    -->
     <parent>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
