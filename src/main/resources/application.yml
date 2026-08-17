@@ -1,0 +1,21 @@
+# A 8080 fica reservada para o llama-server; o Tomcat sobe na 8081 para nao colidir.
+server:
+  port: 8081
+
+spring:
+  application:
+    name: onboarding-agent
+  ai:
+    openai:
+      base-url: http://localhost:8080
+      api-key: not-needed
+      chat:
+        options:
+          model: gemma-2-2b-it
+          temperature: 0.2
+
+agent:
+  workspace-path: ${user.home}/agent-workspace   # repo Git de teste
+  max-replans: 2
+  max-retries: 2
+  confidence-threshold: 0.5
