@@ -3,17 +3,17 @@ package br.edu.fatec.onboardingagent.state;
 import br.edu.fatec.onboardingagent.domain.AgentContext;
 import br.edu.fatec.onboardingagent.domain.EscalationSignal;
 import br.edu.fatec.onboardingagent.domain.ExecutionResult;
-import br.edu.fatec.onboardingagent.domain.StepDecision;
+import br.edu.fatec.onboardingagent.strategy.AgentStrategy;
 
 /**
- * Observa o resultado do passo e roteia para a proxima fase.
+ * Observa o resultado do passo, pergunta a estrategia o que fazer e roteia.
  *
- * <p>O {@code switch} abaixo e sobre {@link StepDecision} — a decisao —, nunca sobre o
+ * <p>O {@code switch} abaixo e sobre a decisao ({@code StepDecision}), nunca sobre o
  * estado. Os estados continuam polimorficos: cada ramo devolve uma instancia diferente.</p>
  *
- * <p><strong>FASE 3:</strong> a decisao e calculada aqui, a partir do resultado.
- * <strong>FASE 4:</strong> ela passa a vir de {@code strategy.decideNext(ctx, last)}, e as
- * tres estrategias vao responder diferente ao mesmo resultado — o roteamento nao muda.</p>
+ * <p>E aqui que as tres estrategias se mostram diferentes diante do mesmo resultado: com
+ * uma falha, o ReAct devolve REPLAN, o PlanThenExecute devolve FAIL e o HumanInTheLoop
+ * devolve ESCALATE.</p>
  */
 public class ObservingState implements AgentState {
 
@@ -36,7 +36,9 @@ public class ObservingState implements AgentState {
             return new ErrorState(machine);
         }
 
-        return switch (decidir(ctx, ultimo)) {
+        AgentStrategy strategy = machine.selector().active();
+
+        return switch (strategy.decideNext(ctx, ultimo)) {
             case CONTINUE -> {
                 ctx.advance();
                 yield ctx.hasMoreSteps() ? new ExecutingState(machine) : new CompletedState(machine);
@@ -46,21 +48,13 @@ public class ObservingState implements AgentState {
                 yield new PlanningState(machine);
             }
             case ESCALATE -> {
-                ctx.recordEscalation(EscalationSignal.of(
-                        EscalationSignal.Reason.AMBIGUOUS_INPUT,
-                        "Preciso da sua ajuda para seguir. O que voce quer que eu faca agora?"));
+                machine.selector().escalate(ctx, strategy.escalationSignal(ctx)
+                        .orElseGet(() -> EscalationSignal.of(
+                                EscalationSignal.Reason.AMBIGUOUS_INPUT,
+                                "Preciso da sua ajuda para seguir. O que voce quer que eu faca agora?")));
                 yield new WaitingApprovalState(machine);
             }
             case FAIL -> new ErrorState(machine);
         };
-    }
-
-    /**
-     * Regra da FASE 3: passo bem-sucedido segue, passo falho vai para tratamento de erro.
-     *
-     * <p>Na FASE 4 esta linha some e vira {@code strategy.decideNext(ctx, ultimo)}.</p>
-     */
-    private StepDecision decidir(AgentContext ctx, ExecutionResult ultimo) {
-        return ultimo.success() ? StepDecision.CONTINUE : StepDecision.FAIL;
     }
 }

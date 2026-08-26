@@ -3,6 +3,7 @@ package br.edu.fatec.onboardingagent.state;
 import br.edu.fatec.onboardingagent.command.CommandInvoker;
 import br.edu.fatec.onboardingagent.command.CommandRegistry;
 import br.edu.fatec.onboardingagent.domain.AgentContext;
+import br.edu.fatec.onboardingagent.strategy.StrategySelector;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -32,6 +33,7 @@ public class AgentStateMachine {
 
     private final CommandInvoker invoker;
     private final CommandRegistry registry;
+    private final StrategySelector selector;
     private final int maxRetries;
     private final int maxReplans;
 
@@ -45,10 +47,12 @@ public class AgentStateMachine {
 
     public AgentStateMachine(CommandInvoker invoker,
                              CommandRegistry registry,
+                             StrategySelector selector,
                              @Value("${agent.max-retries:2}") int maxRetries,
                              @Value("${agent.max-replans:2}") int maxReplans) {
         this.invoker = invoker;
         this.registry = registry;
+        this.selector = selector;
         this.maxRetries = maxRetries;
         this.maxReplans = maxReplans;
     }
@@ -115,6 +119,11 @@ public class AgentStateMachine {
 
     CommandRegistry registry() {
         return registry;
+    }
+
+    /** Context do Strategy: quem os estados consultam para saber a estrategia ativa. */
+    public StrategySelector selector() {
+        return selector;
     }
 
     int maxRetries() {

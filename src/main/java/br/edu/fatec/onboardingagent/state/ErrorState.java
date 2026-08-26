@@ -41,7 +41,9 @@ public class ErrorState implements AgentState {
             return new PlanningState(machine);
         }
 
-        ctx.recordEscalation(new EscalationSignal(
+        // Segunda porta do WAITING_APPROVAL. Escalar pelo selector e o que garante que a
+        // estrategia ativa vire HumanInTheLoop tambem por este caminho.
+        machine.selector().escalate(ctx, new EscalationSignal(
                 EscalationSignal.Reason.COMMAND_FAILED,
                 "Tentei %d vezes e replanejei %d vezes, e continua falhando: %s. Como voce quer seguir?"
                         .formatted(ctx.retryCount(), ctx.replanCount(), erro),

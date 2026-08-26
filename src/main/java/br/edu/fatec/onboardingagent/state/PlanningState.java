@@ -3,16 +3,16 @@ package br.edu.fatec.onboardingagent.state;
 import br.edu.fatec.onboardingagent.domain.AgentContext;
 import br.edu.fatec.onboardingagent.domain.EscalationSignal;
 import br.edu.fatec.onboardingagent.domain.Plan;
+import br.edu.fatec.onboardingagent.strategy.AgentStrategy;
 
 /**
- * Obtem o plano e decide se da para executar.
+ * Pede o plano a estrategia ativa e decide se da para executar.
  *
- * <p><strong>FASE 3:</strong> o plano ja vem instalado no contexto (mockado pelo teste) e
- * aqui so se valida. <strong>FASE 4:</strong> este estado passa a chamar
- * {@code strategy.buildPlan(ctx)} antes de validar — o resto da logica permanece.</p>
+ * <p>Plano invalido nunca vira execucao: vira escalonamento. E a regra que impede o agente
+ * de "chutar" um plano — o gatilho #1 (NO_VALID_PLAN) e o #6 (AMBIGUOUS_INPUT) nascem aqui.</p>
  *
- * <p>Plano invalido nunca vira execucao: vira o gatilho NO_VALID_PLAN e leva a
- * WAITING_APPROVAL. E a regra que impede o agente de "chutar" um plano.</p>
+ * <p>Quem troca a estrategia e o {@code StrategySelector}, chamado por este estado. A
+ * estrategia so declara a incapacidade; ela nao conhece a substituta.</p>
  */
 public class PlanningState implements AgentState {
 
@@ -29,32 +29,22 @@ public class PlanningState implements AgentState {
 
     @Override
     public AgentState handle(AgentContext ctx) {
-        Plan plan = ctx.plan();
+        AgentStrategy strategy = machine.selector().active();
+        Plan plan = strategy.buildPlan(ctx);
+        ctx.installPlan(plan);
 
-        // Validacao completa: alem de ter passos, todo comando citado precisa existir.
         if (plan.isValid(machine.registry().names())) {
             return new ExecutingState(machine);
         }
 
-        // FASE 4: quem formula o sinal passa a ser a estrategia (escalationSignal),
-        // e quem troca a estrategia ativa e o StrategySelector. A transicao nao muda.
-        ctx.recordEscalation(new EscalationSignal(
-                EscalationSignal.Reason.NO_VALID_PLAN,
-                explicar(ctx, plan),
-                null));
-        return new WaitingApprovalState(machine);
-    }
+        // A estrategia diz por que nao conseguiu; se nao disser, assumimos plano invalido.
+        EscalationSignal sinal = strategy.escalationSignal(ctx)
+                .orElseGet(() -> EscalationSignal.of(
+                        EscalationSignal.Reason.NO_VALID_PLAN,
+                        "Nao consegui montar um plano para '%s'. Pode detalhar o que voce quer fazer?"
+                                .formatted(ctx.goal().rawText())));
 
-    private String explicar(AgentContext ctx, Plan plan) {
-        if (plan.size() == 0) {
-            return "Nao consegui montar um plano para '%s'. Pode detalhar o que voce quer fazer?"
-                    .formatted(ctx.goal().rawText());
-        }
-        var desconhecidos = plan.unknownCommands(machine.registry().names());
-        if (!desconhecidos.isEmpty()) {
-            return "O plano usa ferramentas que eu nao tenho (%s). Pode reformular o pedido?"
-                    .formatted(String.join(", ", desconhecidos));
-        }
-        return "O plano que montei nao esta utilizavel. Pode detalhar o que voce quer fazer?";
+        machine.selector().escalate(ctx, sinal);
+        return new WaitingApprovalState(machine);
     }
 }
