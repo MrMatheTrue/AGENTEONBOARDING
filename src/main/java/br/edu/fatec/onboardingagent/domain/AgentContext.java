@@ -2,9 +2,11 @@ package br.edu.fatec.onboardingagent.domain;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * Memoria de trabalho de uma sessao do agente.
@@ -35,6 +37,15 @@ public class AgentContext {
 
     /** Resposta do humano ao escalonamento — console na FASE 4, ApprovalPanel na FASE 6. */
     private String humanResponse;
+
+    /**
+     * Ferramentas destrutivas que o humano ja autorizou nesta sessao.
+     *
+     * <p>A aprovacao e por ferramenta, e nao por passo, de proposito: replanejar cria
+     * PlanStep novos, e uma aprovacao presa ao passo se perderia — o agente voltaria a
+     * perguntar a mesma coisa depois de cada replanejamento.</p>
+     */
+    private final Set<String> approvedCommands = new LinkedHashSet<>();
 
     private final LearningJourney journey;
 
@@ -194,6 +205,21 @@ public class AgentContext {
 
     public void clearHumanResponse() {
         this.humanResponse = null;
+    }
+
+    // ------------------------------------------------------ aprovacoes
+
+    /** Registra que o humano autorizou uma ferramenta destrutiva. */
+    public void approveCommand(String commandName) {
+        approvedCommands.add(commandName);
+    }
+
+    public boolean isApproved(String commandName) {
+        return approvedCommands.contains(commandName);
+    }
+
+    public Set<String> approvedCommands() {
+        return Collections.unmodifiableSet(approvedCommands);
     }
 
     // ------------------------------------------------------------------ trilha

@@ -5,6 +5,7 @@ import br.edu.fatec.onboardingagent.domain.ExecutionResult;
 import br.edu.fatec.onboardingagent.domain.Goal;
 import br.edu.fatec.onboardingagent.domain.Plan;
 import br.edu.fatec.onboardingagent.domain.PlanStep;
+import br.edu.fatec.onboardingagent.observer.AgentEventPublisher;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -22,6 +23,11 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class CommandInvokerTest {
 
     private final AgentContext ctx = new AgentContext(Goal.of("teste"));
+
+    /** Invoker com um publisher sem observadores - aqui interessa o resultado, nao os eventos. */
+    private static CommandInvoker invoker(CommandRegistry registry) {
+        return new CommandInvoker(registry, new AgentEventPublisher(List.of()));
+    }
 
     /** Comando de teste que quebra do jeito que for pedido. */
     private static AgentCommand comandoQueLanca(String nome, RuntimeException erro) {
@@ -46,7 +52,7 @@ class CommandInvokerTest {
     @Test
     @DisplayName("excecao do comando vira ExecutionResult.failure, sem vazar")
     void excecaoViraFalha() {
-        CommandInvoker invoker = new CommandInvoker(new CommandRegistry(
+        CommandInvoker invoker = invoker(new CommandRegistry(
                 List.of(comandoQueLanca("explode", new IllegalStateException("repositorio nao encontrado")))));
 
         ExecutionResult resultado = invoker.execute(ctx, "explode", Map.of());
@@ -58,7 +64,7 @@ class CommandInvokerTest {
     @Test
     @DisplayName("excecao sem mensagem ainda produz falha legivel")
     void excecaoSemMensagemNaoViraNull() {
-        CommandInvoker invoker = new CommandInvoker(new CommandRegistry(
+        CommandInvoker invoker = invoker(new CommandRegistry(
                 List.of(comandoQueLanca("mudo", new NullPointerException()))));
 
         ExecutionResult resultado = invoker.execute(ctx, "mudo", Map.of());
@@ -69,7 +75,7 @@ class CommandInvokerTest {
 
     @Test
     void comandoInexistenteNaoLancaEExplicaOQueExiste() {
-        CommandInvoker invoker = new CommandInvoker(new CommandRegistry(List.of(new ComandoDeTeste())));
+        CommandInvoker invoker = invoker(new CommandRegistry(List.of(new ComandoDeTeste())));
 
         ExecutionResult resultado = invoker.execute(ctx, "gitTeleport", Map.of());
 
@@ -79,7 +85,7 @@ class CommandInvokerTest {
 
     @Test
     void argsNulosNaoQuebramOInvoker() {
-        CommandInvoker invoker = new CommandInvoker(new CommandRegistry(List.of(new ComandoDeTeste())));
+        CommandInvoker invoker = invoker(new CommandRegistry(List.of(new ComandoDeTeste())));
 
         assertThatCode(() -> invoker.execute(ctx, "comandoDeTeste", null)).doesNotThrowAnyException();
     }
@@ -103,7 +109,7 @@ class CommandInvokerTest {
                 return null;
             }
         };
-        CommandInvoker invoker = new CommandInvoker(new CommandRegistry(List.of(devolveNull)));
+        CommandInvoker invoker = invoker(new CommandRegistry(List.of(devolveNull)));
 
         ExecutionResult resultado = invoker.execute(ctx, "nulo", Map.of());
 

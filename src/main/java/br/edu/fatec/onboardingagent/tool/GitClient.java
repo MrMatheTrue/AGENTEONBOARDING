@@ -3,6 +3,10 @@ package br.edu.fatec.onboardingagent.tool;
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.api.Status;
 import org.eclipse.jgit.lib.Ref;
+import org.eclipse.jgit.revwalk.RevCommit;
+import org.eclipse.jgit.transport.PushResult;
+import org.eclipse.jgit.transport.RefSpec;
+import org.eclipse.jgit.transport.RemoteRefUpdate;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
@@ -120,7 +124,96 @@ public class GitClient {
         }
     }
 
+    /**
+     * Prepara arquivos para o commit.
+     *
+     * @param padrao caminho ou padrao; "." prepara tudo
+     * @return quantidade de arquivos preparados
+     */
+    public int add(String padrao) {
+        String alvo = padrao == null || padrao.isBlank() ? "." : padrao.trim();
+        try (Git git = open()) {
+            git.add().addFilepattern(alvo).call();
+            Status status = git.status().call();
+            return status.getAdded().size() + status.getChanged().size() + status.getRemoved().size();
+        } catch (Exception e) {
+            throw falha("preparar '%s' para o commit".formatted(alvo), e);
+        }
+    }
+
+    /**
+     * Grava um commit com o que estiver preparado.
+     *
+     * @return identificador curto do commit
+     */
+    public String commit(String mensagem) {
+        if (mensagem == null || mensagem.isBlank()) {
+            throw new IllegalStateException("O commit precisa de uma mensagem.");
+        }
+        try (Git git = open()) {
+            desligarAssinatura(git);
+            RevCommit commit = git.commit()
+                    .setMessage(mensagem.trim())
+                    .setSign(false)
+                    .call();
+            return commit.getName().substring(0, 7);
+        } catch (Exception e) {
+            throw falha("registrar o commit", e);
+        }
+    }
+
+    /**
+     * Publica a branch atual no remoto.
+     *
+     * @return resumo do que o remoto respondeu
+     */
+    public String push(String remoto) {
+        String destino = remoto == null || remoto.isBlank() ? "origin" : remoto.trim();
+        try (Git git = open()) {
+            String branch = git.getRepository().getBranch();
+            Iterable<PushResult> resultados = git.push()
+                    .setRemote(destino)
+                    .setRefSpecs(new RefSpec("refs/heads/%s:refs/heads/%s".formatted(branch, branch)))
+                    .call();
+
+            StringBuilder resumo = new StringBuilder();
+            for (PushResult resultado : resultados) {
+                for (RemoteRefUpdate atualizacao : resultado.getRemoteUpdates()) {
+                    resumo.append(atualizacao.getRemoteName())
+                            .append(" -> ").append(atualizacao.getStatus()).append("; ");
+                }
+            }
+            return "Branch '%s' publicada em '%s' (%s)".formatted(branch, destino, resumo.toString().trim());
+        } catch (Exception e) {
+            throw falha("publicar no remoto '%s'".formatted(destino), e);
+        }
+    }
+
+    /** Nome do remoto configurado, se houver. */
+    public boolean temRemoto(String remoto) {
+        try (Git git = open()) {
+            return git.getRepository().getConfig()
+                    .getSubsections("remote").contains(remoto == null ? "origin" : remoto);
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
     // ------------------------------------------------------------------ apoio
+
+    /**
+     * Neutraliza a assinatura de commit apenas nesta sessao do JGit.
+     *
+     * <p>Quem usa assinatura por SSH (gpg.format=ssh) quebraria aqui: o JGit 6.10 so
+     * entende openpgp e x509, e recusa a configuracao com "Invalid value". A alteracao e
+     * feita na configuracao em memoria e <strong>nao</strong> e salva — o repositorio do
+     * desenvolvedor continua exatamente como estava.</p>
+     */
+    private static void desligarAssinatura(Git git) {
+        var config = git.getRepository().getConfig();
+        config.setBoolean("commit", null, "gpgsign", false);
+        config.setString("gpg", null, "format", "openpgp");
+    }
 
     private Git open() {
         File dir = workspacePath.toFile();

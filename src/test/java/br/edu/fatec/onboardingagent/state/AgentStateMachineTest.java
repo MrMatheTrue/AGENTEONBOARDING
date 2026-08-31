@@ -7,22 +7,31 @@ import br.edu.fatec.onboardingagent.domain.AgentContext;
 import br.edu.fatec.onboardingagent.domain.EscalationSignal;
 import br.edu.fatec.onboardingagent.domain.ExecutionResult;
 import br.edu.fatec.onboardingagent.domain.Goal;
-import br.edu.fatec.onboardingagent.domain.Plan;
 import br.edu.fatec.onboardingagent.domain.PlanStep;
+import br.edu.fatec.onboardingagent.llm.LlmGateway;
+import br.edu.fatec.onboardingagent.observer.AgentEventPublisher;
+import br.edu.fatec.onboardingagent.strategy.HumanInTheLoopStrategy;
+import br.edu.fatec.onboardingagent.strategy.PlanThenExecuteStrategy;
+import br.edu.fatec.onboardingagent.strategy.ReActStrategy;
+import br.edu.fatec.onboardingagent.strategy.StrategySelector;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
-import java.util.ArrayList;
+import java.io.BufferedReader;
+import java.io.StringReader;
+import java.util.ArrayDeque;
+import java.util.Deque;
 import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Aceite da FASE 3: a maquina gira com um plano fixo, sem LLM e sem Git.
+ * Sequencias de estados da maquina, com ferramentas e LLM dublados.
  *
- * <p>As ferramentas sao dubles controlados pelo teste — o que se verifica aqui e a
- * sequencia de estados, nao o que os comandos fazem.</p>
+ * <p>O foco aqui e a ordem das transicoes, nao o que os comandos fazem nem a qualidade do
+ * plano. O Git de verdade fica no GitCommandsIntegrationTest; o caminho ponta a ponta com
+ * as estrategias, no StrategyEscalationTest.</p>
  */
 class AgentStateMachineTest {
 
@@ -75,32 +84,68 @@ class AgentStateMachineTest {
         }
     }
 
-    private static AgentStateMachine maquina(List<AgentCommand> comandos, int maxRetries, int maxReplans) {
-        CommandRegistry registry = new CommandRegistry(comandos);
-        return new AgentStateMachine(new CommandInvoker(registry), registry, maxRetries, maxReplans);
+    /** LLM roteirizado: devolve as respostas na ordem pedida. */
+    private static class LlmRoteirizado extends LlmGateway {
+        private final Deque<String> respostas = new ArrayDeque<>();
+
+        LlmRoteirizado(String... respostas) {
+            super(null);
+            this.respostas.addAll(List.of(respostas));
+        }
+
+        @Override
+        public String complete(String prompt) {
+            return respostas.isEmpty() ? "{}" : respostas.poll();
+        }
     }
 
-    private static Plan planoDe(int passos, String commandName) {
-        List<PlanStep> lista = new ArrayList<>();
+    /** JSON de um plano com N passos apontando para o mesmo comando. */
+    private static String planoJson(int passos, String commandName, double confianca) {
+        StringBuilder json = new StringBuilder("{\"confidence\": " + confianca + ", \"steps\": [");
         for (int i = 1; i <= passos; i++) {
-            lista.add(new PlanStep(i, "passo " + i, commandName, Map.of()));
+            if (i > 1) {
+                json.append(",");
+            }
+            json.append("{\"description\": \"passo %d\", \"commandName\": \"%s\", \"args\": {}}"
+                    .formatted(i, commandName));
         }
-        return new Plan(lista, 0.9);
+        return json.append("], \"clarificationNeeded\": null}").toString();
+    }
+
+    private record Montagem(AgentStateMachine machine, StrategySelector selector) {
+    }
+
+    private static Montagem montar(List<AgentCommand> comandos,
+                                   int maxRetries,
+                                   int maxReplans,
+                                   LlmGateway llm,
+                                   String... respostasDoHumano) {
+        CommandRegistry registry = new CommandRegistry(comandos);
+        AgentEventPublisher publisher = new AgentEventPublisher(List.of());
+        StrategySelector selector = new StrategySelector(
+                new ReActStrategy(llm, registry, publisher, 0.5, maxReplans),
+                new PlanThenExecuteStrategy(llm, registry),
+                new HumanInTheLoopStrategy(registry,
+                        new BufferedReader(new StringReader(String.join("\n", respostasDoHumano)))),
+                publisher);
+        return new Montagem(
+                new AgentStateMachine(new CommandInvoker(registry, publisher), registry, selector,
+                        publisher, maxRetries, maxReplans),
+                selector);
     }
 
     // ------------------------------------------------------------ caminho feliz
 
     @Test
-    @DisplayName("plano fixo de 3 passos percorre INIT-PLANNING-(EXECUTING-OBSERVING)x3-COMPLETED")
+    @DisplayName("plano de 3 passos percorre INIT-PLANNING-(EXECUTING-OBSERVING)x3-COMPLETED")
     void planoDeTresPassosPercorreASequenciaEsperada() {
         ComandoOk comando = new ComandoOk();
-        AgentStateMachine machine = maquina(List.of(comando), 2, 2);
+        Montagem m = montar(List.of(comando), 2, 2, new LlmRoteirizado(planoJson(3, "ok", 0.9)));
         AgentContext ctx = new AgentContext(Goal.of("Quero criar uma branch feature/login"));
-        ctx.installPlan(planoDe(3, "ok"));
 
-        AgentState fim = machine.run(ctx);
+        AgentState fim = m.machine().run(ctx);
 
-        assertThat(machine.trail()).containsExactly(
+        assertThat(m.machine().trail()).containsExactly(
                 "INIT",
                 "PLANNING",
                 "EXECUTING", "OBSERVING",
@@ -108,71 +153,78 @@ class AgentStateMachineTest {
                 "EXECUTING", "OBSERVING",
                 "COMPLETED");
         assertThat(fim).isInstanceOf(CompletedState.class);
-        assertThat(fim.name()).isEqualTo("COMPLETED");
         assertThat(comando.execucoes).isEqualTo(3);
     }
 
     @Test
     void todosOsPassosTerminamMarcadosComoDone() {
-        AgentStateMachine machine = maquina(List.of(new ComandoOk()), 2, 2);
+        Montagem m = montar(List.of(new ComandoOk()), 2, 2, new LlmRoteirizado(planoJson(3, "ok", 0.9)));
         AgentContext ctx = new AgentContext(Goal.of("objetivo"));
-        ctx.installPlan(planoDe(3, "ok"));
 
-        machine.run(ctx);
+        m.machine().run(ctx);
 
         assertThat(ctx.plan().steps()).allMatch(p -> p.status() == PlanStep.Status.DONE);
         assertThat(ctx.history()).hasSize(3).allMatch(ExecutionResult::success);
         assertThat(ctx.isPlanFinished()).isTrue();
     }
 
-    // -------------------------------------------------------- plano invalido
+    // ---------------------------------------------------------- plano invalido
 
     @Test
     @DisplayName("plano vazio nao executa nada: PLANNING escala direto para WAITING_APPROVAL")
     void planoVazioEscalaSemExecutar() {
         ComandoOk comando = new ComandoOk();
-        AgentStateMachine machine = maquina(List.of(comando), 2, 2);
+        Montagem m = montar(List.of(comando), 2, 2, new LlmRoteirizado("nao entendi o pedido"));
         AgentContext ctx = new AgentContext(Goal.of("Arruma ai o meu repositorio"));
 
-        AgentState fim = machine.run(ctx);
+        AgentState fim = m.machine().run(ctx);
 
-        assertThat(machine.trail()).containsExactly("INIT", "PLANNING", "WAITING_APPROVAL");
+        assertThat(m.machine().trail()).containsExactly("INIT", "PLANNING", "WAITING_APPROVAL");
         assertThat(fim).isInstanceOf(WaitingApprovalState.class);
         assertThat(comando.execucoes).as("nada pode rodar sem plano valido").isZero();
-        assertThat(ctx.isEscalated()).isTrue();
         assertThat(ctx.pendingEscalation()).get()
                 .extracting(EscalationSignal::reason)
                 .isEqualTo(EscalationSignal.Reason.NO_VALID_PLAN);
+        assertThat(m.selector().active().name()).as("o escalonamento trocou a estrategia").isEqualTo("HumanInTheLoop");
     }
 
-    @Test
-    @DisplayName("plano citando ferramenta inexistente tambem escala, e a pergunta diz qual")
-    void planoComFerramentaInventadaEscala() {
-        AgentStateMachine machine = maquina(List.of(new ComandoOk()), 2, 2);
-        AgentContext ctx = new AgentContext(Goal.of("objetivo"));
-        ctx.installPlan(planoDe(1, "gitTeleport"));
-
-        machine.run(ctx);
-
-        assertThat(machine.trail()).containsExactly("INIT", "PLANNING", "WAITING_APPROVAL");
-        assertThat(ctx.pendingEscalation()).get()
-                .extracting(EscalationSignal::questionToHuman).asString()
-                .contains("gitTeleport");
-    }
-
-    // ------------------------------------------------------------- falha e retry
+    // ----------------------------------------------------------- ReAct replaneja
 
     @Test
-    @DisplayName("falha isolada: ERROR devolve o mesmo passo para EXECUTING e o plano termina")
-    void falhaUnicaEhRecuperadaPorRetry() {
+    @DisplayName("ReAct diante de falha volta a PLANNING - replanejar e a marca da estrategia")
+    void reActReplanejaAposFalha() {
         ComandoQueFalha comando = new ComandoQueFalha(1);
-        AgentStateMachine machine = maquina(List.of(comando), 2, 2);
+        Montagem m = montar(List.of(comando), 2, 2, new LlmRoteirizado(
+                planoJson(1, "instavel", 0.9),
+                planoJson(1, "instavel", 0.9)));
         AgentContext ctx = new AgentContext(Goal.of("objetivo"));
-        ctx.installPlan(planoDe(1, "instavel"));
 
-        AgentState fim = machine.run(ctx);
+        AgentState fim = m.machine().run(ctx);
 
-        assertThat(machine.trail()).containsExactly(
+        assertThat(m.machine().trail()).containsExactly(
+                "INIT", "PLANNING",
+                "EXECUTING", "OBSERVING",
+                "PLANNING",
+                "EXECUTING", "OBSERVING",
+                "COMPLETED");
+        assertThat(fim).isInstanceOf(CompletedState.class);
+        assertThat(ctx.replanCount()).isEqualTo(1);
+        assertThat(comando.execucoes).isEqualTo(2);
+    }
+
+    // ------------------------------------------- PlanThenExecute usa o ErrorState
+
+    @Test
+    @DisplayName("PlanThenExecute nao replaneja: a falha vai para ERROR e o retry resolve")
+    void planThenExecuteRecuperaPorRetry() {
+        ComandoQueFalha comando = new ComandoQueFalha(1);
+        Montagem m = montar(List.of(comando), 2, 2, new LlmRoteirizado(planoJson(1, "instavel", 0.9)));
+        m.selector().selectPlanThenExecute();
+        AgentContext ctx = new AgentContext(Goal.of("objetivo"));
+
+        AgentState fim = m.machine().run(ctx);
+
+        assertThat(m.machine().trail()).containsExactly(
                 "INIT", "PLANNING",
                 "EXECUTING", "OBSERVING", "ERROR",
                 "EXECUTING", "OBSERVING",
@@ -185,59 +237,60 @@ class AgentStateMachineTest {
     @DisplayName("falha teimosa esgota retries e replans e termina escalando (2a porta do WAITING_APPROVAL)")
     void falhaPersistenteEscalaDepoisDeEsgotarOsLimites() {
         ComandoQueFalha comando = new ComandoQueFalha(Integer.MAX_VALUE);
-        AgentStateMachine machine = maquina(List.of(comando), 1, 1);
+        Montagem m = montar(List.of(comando), 1, 1, new LlmRoteirizado(planoJson(1, "instavel", 0.9)));
+        m.selector().selectPlanThenExecute();
         AgentContext ctx = new AgentContext(Goal.of("objetivo"));
-        ctx.installPlan(planoDe(1, "instavel"));
 
-        AgentState fim = machine.run(ctx);
+        AgentState fim = m.machine().run(ctx);
 
         assertThat(fim).isInstanceOf(WaitingApprovalState.class);
-        assertThat(machine.trail()).endsWith("WAITING_APPROVAL");
-        assertThat(machine.trail()).contains("ERROR");
+        assertThat(m.machine().trail()).endsWith("WAITING_APPROVAL").contains("ERROR");
         assertThat(ctx.pendingEscalation()).get()
                 .extracting(EscalationSignal::reason)
                 .isEqualTo(EscalationSignal.Reason.COMMAND_FAILED);
-        assertThat(ctx.retryCount()).isEqualTo(1);
         assertThat(ctx.replanCount()).isEqualTo(1);
+        assertThat(m.selector().active().name())
+                .as("a 2a porta tambem troca a estrategia").isEqualTo("HumanInTheLoop");
     }
 
-    // --------------------------------------------------- resposta do humano
+    // ------------------------------------------------------ resposta do humano
 
     @Test
-    @DisplayName("respondido o humano, WAITING_APPROVAL volta a PLANNING e o plano novo roda")
+    @DisplayName("respondido o humano, WAITING_APPROVAL deescala e o plano novo roda")
     void respostaHumanaDestravaAMaquina() {
         ComandoOk comando = new ComandoOk();
-        AgentStateMachine machine = maquina(List.of(comando), 2, 2);
+        Montagem m = montar(List.of(comando), 2, 2,
+                new LlmRoteirizado(
+                        "{\"confidence\": 0.2, \"steps\": [], \"clarificationNeeded\": \"O que voce quer arrumar?\"}",
+                        planoJson(1, "ok", 0.9)),
+                "quero ver o status do repositorio");
         AgentContext ctx = new AgentContext(Goal.of("Arruma ai o meu repositorio"));
 
-        AgentState pausada = machine.run(ctx);
-        assertThat(pausada).isInstanceOf(WaitingApprovalState.class);
+        AgentState fim = m.machine().run(ctx);
 
-        // O humano esclarece e o "novo plano" chega (na FASE 4 quem o produz e a estrategia).
-        ctx.submitHumanResponse("quero ver o status do repositorio");
-        ctx.installPlan(planoDe(1, "ok"));
-
-        AgentState fim = machine.resume(pausada, ctx);
-
-        assertThat(fim).isInstanceOf(CompletedState.class);
-        assertThat(machine.trail()).containsExactly(
-                "INIT", "PLANNING", "WAITING_APPROVAL",
-                "WAITING_APPROVAL", "PLANNING",
+        assertThat(m.machine().trail()).containsExactly(
+                "INIT", "PLANNING",
+                "WAITING_APPROVAL",
+                "PLANNING",
                 "EXECUTING", "OBSERVING",
                 "COMPLETED");
+        assertThat(fim).isInstanceOf(CompletedState.class);
         assertThat(ctx.isEscalated()).as("escalonamento resolvido").isFalse();
         assertThat(ctx.escalationHistory()).as("mas a evidencia permanece").hasSize(1);
+        assertThat(m.selector().active().name()).isEqualTo("ReAct");
+        assertThat(comando.execucoes).isEqualTo(1);
     }
 
     @Test
     void maquinaPausaEmVezDeGirarEmFalsoEsperandoOHumano() {
-        AgentStateMachine machine = maquina(List.of(new ComandoOk()), 2, 2);
+        Montagem m = montar(List.of(new ComandoOk()), 2, 2,
+                new LlmRoteirizado("{\"confidence\": 0.1, \"steps\": [], \"clarificationNeeded\": \"o que voce quer?\"}"));
         AgentContext ctx = new AgentContext(Goal.of("pedido ambiguo"));
 
-        // Sem resposta humana, rodar de novo nao avanca nem trava o processo.
-        AgentState primeira = machine.run(ctx);
-        AgentState segunda = machine.resume(primeira, ctx);
+        AgentState primeira = m.machine().run(ctx);
+        AgentState segunda = m.machine().resume(primeira, ctx);
 
+        assertThat(primeira).isInstanceOf(WaitingApprovalState.class);
         assertThat(segunda).isInstanceOf(WaitingApprovalState.class);
     }
 }

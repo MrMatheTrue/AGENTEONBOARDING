@@ -1,0 +1,60 @@
+@startuml uml-state
+' Maquina de estados do agente, como implementada em state/.
+' Cada estado e uma classe que devolve o proximo - nao existe enum + switch.
+
+title Maquina de estados - as portas para WAITING_APPROVAL
+
+[*] --> INIT
+
+INIT --> PLANNING : da a partida
+
+PLANNING --> EXECUTING : plan.isValid(registry.names())
+PLANNING --> WAITING_APPROVAL : **porta 1**\nplano invalido\n(NO_VALID_PLAN / AMBIGUOUS_INPUT /\nLOW_CONFIDENCE)
+
+EXECUTING --> OBSERVING : comando executado\n(resultado no historico)
+EXECUTING --> WAITING_APPROVAL : **porta 2**\npasso destrutivo sem autorizacao\n(DESTRUCTIVE_STEP)
+EXECUTING --> COMPLETED : plano sem passos restantes
+
+OBSERVING --> EXECUTING : CONTINUE\n(advance)
+OBSERVING --> PLANNING : REPLAN\n(recordReplan)
+OBSERVING --> WAITING_APPROVAL : **porta 3**\nestrategia se declarou incapaz\n(REPLAN_LOOP)
+OBSERVING --> ERROR : FAIL
+OBSERVING --> COMPLETED : CONTINUE e nao ha mais passos
+
+ERROR --> EXECUTING : retryCount < maxRetries\n(recordRetry)
+ERROR --> PLANNING : replanCount < maxReplans\n(recordReplan)
+ERROR --> WAITING_APPROVAL : **porta 4**\ntentativas e replanejamentos esgotados\n(COMMAND_FAILED)
+
+WAITING_APPROVAL --> WAITING_APPROVAL : sem resposta do humano\n(devolve this: a maquina PAUSA)
+WAITING_APPROVAL --> PLANNING : humano respondeu\n(deescalate: volta ao ReAct)
+
+COMPLETED --> [*]
+
+note top of WAITING_APPROVAL
+  Toda porta passa pelo **StrategySelector.escalate()**,
+  que troca a estrategia ativa para HumanInTheLoop.
+  E o unico lugar do sistema que troca de estrategia.
+end note
+
+note right of ERROR
+  Limites configuraveis e mensuraveis:
+  agent.max-retries (padrao 2)
+  agent.max-replans (padrao 2)
+end note
+
+note bottom of COMPLETED
+  O laco de AgentStateMachine para em dois casos:
+  * CompletedState (fim)
+  * estado que devolve a si mesmo (sem progresso)
+  Sem o segundo, esperar o humano seria laco infinito.
+end note
+
+legend right
+  O CLAUDE.md previa **duas** portas para WAITING_APPROVAL
+  (OBSERVING e ERROR). A implementacao tem **quatro**:
+  as duas previstas mais PLANNING (plano invalido, que e o
+  gatilho #1 do MVP) e EXECUTING (passo destrutivo, gatilho #5).
+  Este diagrama mostra o codigo, nao o esboco inicial.
+endlegend
+
+@enduml

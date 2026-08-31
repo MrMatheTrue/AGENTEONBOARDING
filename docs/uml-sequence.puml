@@ -1,0 +1,132 @@
+@startuml uml-sequence
+' Caso "quero enviar minha alteracao para revisao", com o ramo de escalonamento.
+' A sequencia e a que o teste EnviarParaRevisaoTest executa de fato.
+
+skinparam sequenceMessageAlign left
+autonumber
+
+title "Quero enviar minha alteracao para revisao" - com escalonamento antes do PR
+
+actor Desenvolvedor as Dev
+participant "AgentStateMachine\n<<State Context>>" as SM
+participant "PlanningState" as PLAN
+participant "StrategySelector\n<<Strategy Context>>" as SEL
+participant "ReActStrategy" as REACT
+participant "LlmGateway" as LLM
+participant "ExecutingState" as EXEC
+participant "CommandInvoker\n<<Invoker>>" as INV
+participant "GitClient\n<<Receiver>>" as GIT
+participant "CreatePullRequestCommand" as PRCMD
+participant "GitHubClient\n<<Receiver>>" as GH
+participant "WaitingApprovalState" as WAIT
+participant "HumanInTheLoop" as HITL
+participant "AgentEventPublisher\n<<Subject>>" as PUB
+participant "TraceObserver" as TRACE
+
+Dev -> SM : run(ctx)  // "enviar para revisao"
+activate SM
+SM -> PUB : publish(StateChanged INIT)
+PUB -> TRACE : onEvent(...)
+
+== planejamento ==
+SM -> PLAN : handle(ctx)
+activate PLAN
+PLAN -> SEL : active()
+SEL --> PLAN : ReActStrategy
+PLAN -> REACT : buildPlan(ctx)
+activate REACT
+REACT -> LLM : complete(prompt de planejamento)
+LLM --> REACT : JSON com 6 passos, confidence 0.9
+REACT -> PUB : publish(PlanCreated)
+REACT --> PLAN : Plan valido
+deactivate REACT
+PLAN --> SM : ExecutingState
+deactivate PLAN
+
+== execucao dos passos reversiveis ==
+loop status, checkout, add, commit, push
+  SM -> EXEC : handle(ctx)
+  activate EXEC
+  EXEC -> SEL : active().requiresApproval(step)
+  SEL --> EXEC : false (comando nao destrutivo)
+  EXEC -> INV : execute(ctx, step)
+  activate INV
+  INV -> PUB : publish(CommandStarted)
+  INV -> GIT : status() / checkout() / add() / commit() / push()
+  GIT --> INV : resultado
+  INV -> PUB : publish(CommandCompleted)
+  INV --> EXEC : ExecutionResult.success
+  deactivate INV
+  EXEC --> SM : ObservingState
+  deactivate EXEC
+  SM -> REACT : decideNext(ctx, last)
+  REACT --> SM : CONTINUE
+end
+
+== ramo de escalonamento: o passo destrutivo ==
+SM -> EXEC : handle(ctx)  // proximo passo: createPullRequest
+activate EXEC
+EXEC -> SEL : active().requiresApproval(step)
+SEL --> EXEC : **true** (isDestructive)
+note right of EXEC
+  Gatilho #5 DESTRUCTIVE_STEP.
+  O comando NAO e executado.
+end note
+EXEC -> SEL : escalate(ctx, DESTRUCTIVE_STEP)
+activate SEL
+SEL -> PUB : publish(StrategyEscalated)
+PUB -> TRACE : registra MOTIVO: DESTRUCTIVE_STEP
+SEL -> SEL : active = HumanInTheLoop
+SEL --> EXEC : HumanInTheLoopStrategy
+deactivate SEL
+EXEC --> SM : WaitingApprovalState
+deactivate EXEC
+
+SM -> WAIT : handle(ctx)
+activate WAIT
+WAIT -> HITL : askHuman("Posso abrir o pull request?")
+HITL -> Dev : pergunta (console ou ApprovalPanel)
+Dev --> HITL : "sim"
+HITL --> WAIT : "sim"
+WAIT -> WAIT : ctx.approveCommand("createPullRequest")
+WAIT -> SEL : deescalate(ctx)
+activate SEL
+SEL -> SEL : active = ReAct
+SEL -> PUB : publish(StrategyDeescalated)
+SEL --> WAIT
+deactivate SEL
+WAIT --> SM : PlanningState
+deactivate WAIT
+
+== replanejamento com a resposta, e o PR ==
+SM -> PLAN : handle(ctx)
+PLAN -> REACT : buildPlan(ctx)  // a resposta do humano entra no prompt
+REACT --> PLAN : Plan valido
+PLAN --> SM : ExecutingState
+
+SM -> EXEC : handle(ctx)
+activate EXEC
+EXEC -> SEL : active().requiresApproval(step)
+SEL --> EXEC : true
+EXEC -> EXEC : ctx.isApproved("createPullRequest") == true
+note right of EXEC
+  Aprovado antes: nao pergunta de novo.
+  A autorizacao e por ferramenta, entao
+  sobrevive ao replanejamento.
+end note
+EXEC -> INV : execute(ctx, step)
+INV -> PRCMD : execute(ctx, args)
+PRCMD -> GH : createPullRequest(title, head, base, body)
+GH --> PRCMD : URL do PR
+PRCMD --> INV : ExecutionResult.success
+INV -> PUB : publish(CommandCompleted)
+INV --> EXEC : sucesso
+EXEC --> SM : ObservingState
+deactivate EXEC
+
+SM -> PUB : publish(GoalCompleted)
+PUB -> TRACE : "FIM objetivo atendido"
+SM --> Dev : CompletedState
+deactivate SM
+
+@enduml

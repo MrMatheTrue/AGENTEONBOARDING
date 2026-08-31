@@ -1,0 +1,27 @@
+# Configuracao usada apenas pelos testes. Substitui a de src/main/resources.
+#
+# O motivo de existir: o @SpringBootTest executa os CommandLineRunner do contexto, e o
+# console da FASE 4 fica bloqueado lendo System.in - a suite inteira travava. Aqui
+# nenhuma interface sobe; em producao o padrao continua sendo o console.
+server:
+  port: 8081
+
+spring:
+  application:
+    name: onboarding-agent
+  ai:
+    openai:
+      base-url: http://localhost:8080
+      api-key: not-needed
+      chat:
+        options:
+          model: gemma-2-2b-it
+          temperature: 0.2
+
+agent:
+  ui: none
+  workspace-path: ${java.io.tmpdir}/agent-workspace-test
+  journey-path: ${java.io.tmpdir}/agent-journey-test.properties
+  max-replans: 2
+  max-retries: 2
+  confidence-threshold: 0.5
