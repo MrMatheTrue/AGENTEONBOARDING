@@ -1,8 +1,8 @@
 # Configuracao usada apenas pelos testes. Substitui a de src/main/resources.
 #
 # O motivo de existir: o @SpringBootTest executa os CommandLineRunner do contexto, e o
-# console da FASE 4 fica bloqueado lendo System.in - a suite inteira travava. Aqui o
-# console fica desligado; em producao ele continua ligado por padrao.
+# console da FASE 4 fica bloqueado lendo System.in - a suite inteira travava. Aqui
+# nenhuma interface sobe; em producao o padrao continua sendo o console.
 server:
   port: 8081
 
@@ -19,7 +19,7 @@ spring:
           temperature: 0.2
 
 agent:
-  console: false
+  ui: none
   workspace-path: ${java.io.tmpdir}/agent-workspace-test
   max-replans: 2
   max-retries: 2

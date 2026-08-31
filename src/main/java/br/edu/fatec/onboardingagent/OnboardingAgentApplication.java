@@ -4,6 +4,8 @@ import br.edu.fatec.onboardingagent.domain.AgentContext;
 import br.edu.fatec.onboardingagent.domain.ExecutionResult;
 import br.edu.fatec.onboardingagent.domain.Goal;
 import br.edu.fatec.onboardingagent.domain.PlanStep;
+import br.edu.fatec.onboardingagent.gui.MainWindow;
+import br.edu.fatec.onboardingagent.observer.AgentEventPublisher;
 import br.edu.fatec.onboardingagent.observer.impl.TraceObserver;
 import br.edu.fatec.onboardingagent.state.AgentState;
 import br.edu.fatec.onboardingagent.state.AgentStateMachine;
@@ -30,14 +32,27 @@ public class OnboardingAgentApplication {
     }
 
     /**
+     * Janela Swing da FASE 6. Suba com {@code --agent.ui=swing}.
+     *
+     * <p>A janela e quem monta a arvore do Composite e inscreve o GuiObserver no publisher.</p>
+     */
+    @Bean
+    @ConditionalOnProperty(name = "agent.ui", havingValue = "swing")
+    public CommandLineRunner janelaDoAgente(AgentStateMachine machine, StrategySelector selector,
+                                            AgentEventPublisher publisher, TraceObserver trace) {
+        return args -> javax.swing.SwingUtilities.invokeLater(() ->
+                new MainWindow(machine, selector, publisher, trace).setVisible(true));
+    }
+
+    /**
      * Console da FASE 4 — recebe o objetivo, roda a maquina e mostra o resultado.
      *
      * <p>Fica aqui, e nao numa classe propria, porque a arvore de arquivos do projeto nao
-     * preve um runner: a interacao definitiva e a GUI Swing da FASE 6. Desligue com
-     * {@code --agent.console=false} para subir apenas a API.</p>
+     * preve um runner. E o padrao; use {@code --agent.ui=swing} para a janela ou
+     * {@code --agent.ui=none} para subir apenas a API.</p>
      */
     @Bean
-    @ConditionalOnProperty(name = "agent.console", havingValue = "true", matchIfMissing = true)
+    @ConditionalOnProperty(name = "agent.ui", havingValue = "console", matchIfMissing = true)
     public CommandLineRunner consoleDoAgente(AgentStateMachine machine, StrategySelector selector,
                                             TraceObserver trace) {
         return args -> {

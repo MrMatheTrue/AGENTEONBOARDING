@@ -37,6 +37,15 @@ public class HumanInTheLoopStrategy implements AgentStrategy {
     /** Fonte das respostas do humano. Trocavel para o teste nao depender do teclado. */
     private final BufferedReader entrada;
 
+    /**
+     * Quem faz a pergunta e devolve a resposta.
+     *
+     * <p>Por padrao e o console. A FASE 6 troca por {@code ApprovalPanel::perguntar} e mais
+     * nada muda — nem esta classe, nem os estados, nem o selector. E o unico ponto do
+     * sistema que sabe como se fala com o humano.</p>
+     */
+    private transient java.util.function.Function<String, String> fonteDaResposta = this::perguntarNoConsole;
+
     // @Autowired explicito: sao dois construtores publicos, e sem a marcacao o Spring
     // nao sabe qual usar.
     @Autowired
@@ -67,18 +76,28 @@ public class HumanInTheLoopStrategy implements AgentStrategy {
         return entrada;
     }
 
+    /** Instala outra forma de conversar com o humano — a janela, na FASE 6. */
+    public void useHumanSource(java.util.function.Function<String, String> fonte) {
+        this.fonteDaResposta = fonte == null ? this::perguntarNoConsole : fonte;
+    }
+
     /**
      * Faz a pergunta e espera a resposta.
      *
      * @return o que o humano respondeu, ou vazio se nao veio nada
      */
     public String askHuman(String question) {
+        String resposta = fonteDaResposta.apply(question);
+        return resposta == null ? "" : resposta.trim();
+    }
+
+    private String perguntarNoConsole(String question) {
         System.out.println();
         System.out.println("  >> " + question);
         System.out.print("  sua resposta: ");
         try {
             String resposta = entrada.readLine();
-            return resposta == null ? "" : resposta.trim();
+            return resposta == null ? "" : resposta;
         } catch (Exception e) {
             log.warn("Nao consegui ler a resposta do humano: {}", e.getMessage());
             return "";
