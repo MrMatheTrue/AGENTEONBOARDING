@@ -1,0 +1,294 @@
+@startuml uml-classes
+' GitHub Onboarding Agent - diagrama de classes
+' Os cinco padroes GoF, estereotipados. Os nomes e as assinaturas sao os do codigo.
+
+skinparam classAttributeIconSize 0
+skinparam packageStyle rectangle
+hide empty members
+
+title GitHub Onboarding Agent - os 5 padroes no mesmo fluxo
+
+package domain <<POJOs puros: zero Spring, zero IA>> {
+  class AgentContext {
+    -goal : Goal
+    -plan : Plan
+    -currentStepIndex : int
+    -history : List<ExecutionResult>
+    -escalationHistory : List<EscalationSignal>
+    -replanCount : int
+    -retryCount : int
+    -approvedCommands : Set<String>
+    +installPlan(Plan)
+    +advance()
+    +recordResult(ExecutionResult)
+    +recordEscalation(EscalationSignal)
+    +clearEscalation()
+    +approveCommand(String)
+  }
+  class Plan {
+    -confidence : double
+    +isValid() : boolean
+    +isValid(Set<String>) : boolean
+    +unknownCommands(Set<String>) : List<String>
+  }
+  class PlanStep {
+    -id : int
+    -commandName : String
+    -args : Map<String,Object>
+    -status : Status
+  }
+  class Goal
+  class ExecutionResult
+  class LearningJourney
+  enum StepDecision {
+    CONTINUE
+    REPLAN
+    ESCALATE
+    FAIL
+  }
+  class EscalationSignal {
+    +reason : Reason
+    +questionToHuman : String
+    +blockedStep : PlanStep
+  }
+  enum Reason {
+    NO_VALID_PLAN
+    LOW_CONFIDENCE
+    REPLAN_LOOP
+    COMMAND_FAILED
+    DESTRUCTIVE_STEP
+    AMBIGUOUS_INPUT
+  }
+
+  AgentContext *-- Plan
+  AgentContext *-- Goal
+  AgentContext *-- LearningJourney
+  Plan *-- "1..*" PlanStep
+  EscalationSignal +-- Reason
+}
+
+package strategy <<STRATEGY>> {
+  interface AgentStrategy <<Strategy>> {
+    +name() : String
+    +buildPlan(AgentContext) : Plan
+    +decideNext(AgentContext, ExecutionResult) : StepDecision
+    +requiresApproval(PlanStep) : boolean
+    +escalationSignal(AgentContext) : Optional<EscalationSignal>
+  }
+  class ReActStrategy <<ConcreteStrategy>> {
+    -confidenceThreshold : double
+    -maxReplans : int
+    ' falha -> REPLAN; orcamento esgotado -> ESCALATE
+  }
+  class PlanThenExecuteStrategy <<ConcreteStrategy>> {
+    ' planeja 1x; falha -> FAIL, nunca replaneja
+  }
+  class HumanInTheLoopStrategy <<ConcreteStrategy>> {
+    +askHuman(String) : String
+    +useHumanSource(Function<String,String>)
+    ' tudo exige aprovacao; decideNext -> ESCALATE
+  }
+  class StrategySelector <<Context>> {
+    -active : AgentStrategy
+    +escalate(AgentContext, EscalationSignal) : AgentStrategy
+    +deescalate(AgentContext)
+    +selectReAct() : AgentStrategy
+    +selectPlanThenExecute() : AgentStrategy
+  }
+
+  AgentStrategy <|.. ReActStrategy
+  AgentStrategy <|.. PlanThenExecuteStrategy
+  AgentStrategy <|.. HumanInTheLoopStrategy
+  StrategySelector --> "1  active" AgentStrategy : troca em runtime
+  StrategySelector ..> ReActStrategy
+  StrategySelector ..> HumanInTheLoopStrategy
+}
+
+package state <<STATE>> {
+  interface AgentState <<State>> {
+    +name() : String
+    +handle(AgentContext) : AgentState
+  }
+  class InitState <<ConcreteState>>
+  class PlanningState <<ConcreteState>>
+  class ExecutingState <<ConcreteState>>
+  class ObservingState <<ConcreteState>>
+  class WaitingApprovalState <<ConcreteState>>
+  class ErrorState <<ConcreteState>>
+  class CompletedState <<ConcreteState>>
+  class AgentStateMachine <<Context>> {
+    -maxRetries : int
+    -maxReplans : int
+    +run(AgentContext) : AgentState
+    +resume(AgentState, AgentContext) : AgentState
+    +trail() : List<String>
+  }
+
+  AgentState <|.. InitState
+  AgentState <|.. PlanningState
+  AgentState <|.. ExecutingState
+  AgentState <|.. ObservingState
+  AgentState <|.. WaitingApprovalState
+  AgentState <|.. ErrorState
+  AgentState <|.. CompletedState
+  AgentStateMachine --> "current" AgentState
+}
+
+package command <<COMMAND>> {
+  interface AgentCommand <<Command>> {
+    +name() : String
+    +description() : String
+    +execute(AgentContext, Map) : ExecutionResult
+    +isDestructive() : boolean
+  }
+  class CommandInvoker <<Invoker>> {
+    +execute(AgentContext, PlanStep) : ExecutionResult
+    ' excecao nunca vaza: vira ExecutionResult.failure
+  }
+  class CommandRegistry {
+    +find(String) : Optional<AgentCommand>
+    +names() : Set<String>
+    +catalogForPrompt() : String
+  }
+  class GitStatusCommand <<ConcreteCommand>>
+  class GitBranchCommand <<ConcreteCommand>>
+  class GitCheckoutCommand <<ConcreteCommand>>
+  class GitAddCommand <<ConcreteCommand>>
+  class GitCommitCommand <<ConcreteCommand>>
+  class GitPushCommand <<ConcreteCommand>>
+  class CreatePullRequestCommand <<ConcreteCommand>> {
+    +isDestructive() : boolean = true
+  }
+  class KnowledgeSearchCommand <<ConcreteCommand>>
+
+  AgentCommand <|.. GitStatusCommand
+  AgentCommand <|.. GitBranchCommand
+  AgentCommand <|.. GitCheckoutCommand
+  AgentCommand <|.. GitAddCommand
+  AgentCommand <|.. GitCommitCommand
+  AgentCommand <|.. GitPushCommand
+  AgentCommand <|.. CreatePullRequestCommand
+  AgentCommand <|.. KnowledgeSearchCommand
+  CommandInvoker --> CommandRegistry
+  CommandRegistry o--> "*" AgentCommand
+}
+
+package tool <<Receivers: o trabalho de verdade>> {
+  class GitClient <<Receiver>> {
+    +status() : String
+    +createBranch(String) : String
+    +checkout(String, boolean) : String
+    +add(String) : int
+    +commit(String) : String
+    +push(String) : String
+  }
+  class GitHubClient <<Receiver>> {
+    +createPullRequest(...) : String
+  }
+  class KnowledgeService <<Receiver>> {
+    +search(String) : List<String>
+  }
+}
+
+package observer <<OBSERVER>> {
+  interface AgentObserver <<Observer>> {
+    +onEvent(AgentEvent)
+  }
+  class AgentEventPublisher <<Subject>> {
+    -observers : List<AgentObserver>
+    +subscribe(AgentObserver)
+    +unsubscribe(AgentObserver)
+    +publish(AgentEvent)
+  }
+  interface AgentEvent <<sealed>> {
+    ' PlanCreated, StateChanged, CommandStarted,
+    ' CommandCompleted, CommandFailed, ReasoningStep,
+    ' StrategyEscalated, StrategyDeescalated,
+    ' UserApprovalRequired, GoalCompleted
+  }
+  class TraceObserver <<ConcreteObserver>>
+  class ErrorObserver <<ConcreteObserver>>
+  class ProgressObserver <<ConcreteObserver>>
+  class GuiObserver <<ConcreteObserver>>
+
+  AgentObserver <|.. TraceObserver
+  AgentObserver <|.. ErrorObserver
+  AgentObserver <|.. ProgressObserver
+  AgentObserver <|.. GuiObserver
+  AgentEventPublisher o--> "*" AgentObserver
+  AgentEventPublisher ..> AgentEvent
+}
+
+package gui <<COMPOSITE>> {
+  interface UIComponent <<Component>> {
+    +render()
+    +refresh(AgentEvent)
+  }
+  class UIComposite <<Composite>> {
+    -children : List<UIComponent>
+    +adicionar(UIComponent) : UIComposite
+  }
+  class GoalPanel <<Leaf>>
+  class PlanPanel <<Leaf>>
+  class StatePanel <<Leaf>>
+  class TraceLogPanel <<Leaf>>
+  class ProgressPanel <<Leaf>>
+  class ApprovalPanel <<Leaf>>
+  class MainWindow
+
+  UIComponent <|.. UIComposite
+  UIComponent <|.. GoalPanel
+  UIComponent <|.. PlanPanel
+  UIComponent <|.. StatePanel
+  UIComponent <|.. TraceLogPanel
+  UIComponent <|.. ProgressPanel
+  UIComponent <|.. ApprovalPanel
+  UIComposite o--> "*" UIComponent : propaga refresh()
+  MainWindow --> UIComposite : raiz
+}
+
+package llm {
+  class LlmGateway {
+    +complete(String) : String
+  }
+  class PromptTemplates {
+    +planning(AgentContext, String) : String
+    +parsePlanResponse(String) : PlanProposal
+  }
+}
+
+' ---- as costuras entre os padroes (o "mesmo fluxo") ----
+PlanningState --> AgentStrategy : buildPlan()
+PlanningState --> StrategySelector : escalate()
+ObservingState --> AgentStrategy : decideNext()
+ObservingState --> StrategySelector : escalate()
+ExecutingState --> CommandInvoker : execute()
+ExecutingState --> StrategySelector : escalate() se destrutivo
+ErrorState --> StrategySelector : escalate() se esgotou
+WaitingApprovalState --> StrategySelector : deescalate()
+WaitingApprovalState ..> HumanInTheLoopStrategy : askHuman()
+ApprovalPanel ..> HumanInTheLoopStrategy : useHumanSource()
+
+AgentStateMachine --> AgentEventPublisher
+CommandInvoker --> AgentEventPublisher
+StrategySelector --> AgentEventPublisher
+ReActStrategy --> AgentEventPublisher
+GuiObserver --> UIComponent : refresh na RAIZ
+
+ReActStrategy --> LlmGateway
+ReActStrategy ..> PromptTemplates
+PlanThenExecuteStrategy --> LlmGateway
+GitStatusCommand --> GitClient
+GitCommitCommand --> GitClient
+CreatePullRequestCommand --> GitHubClient
+KnowledgeSearchCommand --> KnowledgeService
+
+note as N1
+  **Regras que o codigo respeita**
+  * uma unica estrategia ativa: StrategySelector.active
+  * estrategia NUNCA chama outra: so devolve ESCALATE
+  * State polimorfico: sem enum + switch de estado
+  * todo Command tem Receiver proprio, nao chama o LLM
+  * AgentEventPublisher e nosso, nao o do Spring
+end note
+@enduml
