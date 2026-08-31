@@ -6,6 +6,7 @@ import br.edu.fatec.onboardingagent.domain.Goal;
 import br.edu.fatec.onboardingagent.domain.PlanStep;
 import br.edu.fatec.onboardingagent.gui.MainWindow;
 import br.edu.fatec.onboardingagent.observer.AgentEventPublisher;
+import br.edu.fatec.onboardingagent.observer.impl.ProgressObserver;
 import br.edu.fatec.onboardingagent.observer.impl.TraceObserver;
 import br.edu.fatec.onboardingagent.state.AgentState;
 import br.edu.fatec.onboardingagent.state.AgentStateMachine;
@@ -39,9 +40,10 @@ public class OnboardingAgentApplication {
     @Bean
     @ConditionalOnProperty(name = "agent.ui", havingValue = "swing")
     public CommandLineRunner janelaDoAgente(AgentStateMachine machine, StrategySelector selector,
-                                            AgentEventPublisher publisher, TraceObserver trace) {
+                                            AgentEventPublisher publisher, TraceObserver trace,
+                                            ProgressObserver progresso) {
         return args -> javax.swing.SwingUtilities.invokeLater(() ->
-                new MainWindow(machine, selector, publisher, trace).setVisible(true));
+                new MainWindow(machine, selector, publisher, trace, progresso).setVisible(true));
     }
 
     /**
@@ -54,7 +56,7 @@ public class OnboardingAgentApplication {
     @Bean
     @ConditionalOnProperty(name = "agent.ui", havingValue = "console", matchIfMissing = true)
     public CommandLineRunner consoleDoAgente(AgentStateMachine machine, StrategySelector selector,
-                                            TraceObserver trace) {
+                                            TraceObserver trace, ProgressObserver progresso) {
         return args -> {
             // Uma unica fonte de entrada para a sessao inteira. Criar outro BufferedReader
             // aqui faria os dois competirem pelo System.in, e a resposta ao escalonamento
@@ -96,13 +98,13 @@ public class OnboardingAgentApplication {
                     continue;
                 }
 
-                executar(machine, selector, trace, linha);
+                executar(machine, selector, trace, progresso, linha);
             }
         };
     }
 
     private void executar(AgentStateMachine machine, StrategySelector selector,
-                          TraceObserver trace, String objetivo) {
+                          TraceObserver trace, ProgressObserver progresso, String objetivo) {
         // Toda sessao comeca pelo planejador escolhido; um escalonamento pode troca-lo
         // no meio do caminho, e o deescalate o devolve.
         if (selector.isEscalated()) {
@@ -110,7 +112,8 @@ public class OnboardingAgentApplication {
         }
 
         trace.limpar();
-        AgentContext ctx = new AgentContext(Goal.of(objetivo));
+        // A trilha vem das sessoes anteriores: o onboarding continua de onde parou.
+        AgentContext ctx = new AgentContext(Goal.of(objetivo), progresso.carregar());
         AgentState fim = machine.run(ctx);
 
         System.out.println();

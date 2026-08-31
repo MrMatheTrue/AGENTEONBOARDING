@@ -10,6 +10,7 @@ import br.edu.fatec.onboardingagent.gui.leaf.StatePanel;
 import br.edu.fatec.onboardingagent.gui.leaf.TraceLogPanel;
 import br.edu.fatec.onboardingagent.observer.AgentEventPublisher;
 import br.edu.fatec.onboardingagent.observer.impl.GuiObserver;
+import br.edu.fatec.onboardingagent.observer.impl.ProgressObserver;
 import br.edu.fatec.onboardingagent.observer.impl.TraceObserver;
 import br.edu.fatec.onboardingagent.state.AgentStateMachine;
 import br.edu.fatec.onboardingagent.strategy.StrategySelector;
@@ -45,6 +46,7 @@ public class MainWindow extends JFrame {
     private final AgentStateMachine machine;
     private final StrategySelector selector;
     private final TraceObserver trace;
+    private final ProgressObserver progresso;
 
     private final UIComposite raiz = new UIComposite(new BorderLayout(8, 8));
     private final GoalPanel goalPanel = new GoalPanel();
@@ -60,11 +62,13 @@ public class MainWindow extends JFrame {
     public MainWindow(AgentStateMachine machine,
                       StrategySelector selector,
                       AgentEventPublisher publisher,
-                      TraceObserver trace) {
+                      TraceObserver trace,
+                      ProgressObserver progresso) {
         super("GitHub Onboarding Agent");
         this.machine = machine;
         this.selector = selector;
         this.trace = trace;
+        this.progresso = progresso;
         this.traceLogPanel = new TraceLogPanel(trace);
 
         montarArvore();
@@ -148,7 +152,7 @@ public class MainWindow extends JFrame {
         // responder no ApprovalPanel, e a janela congelaria antes de mostrar a pergunta.
         Thread agente = new Thread(() -> {
             try {
-                machine.run(new AgentContext(Goal.of(objetivo)));
+                machine.run(new AgentContext(Goal.of(objetivo), progresso.carregar()));
             } catch (Exception e) {
                 System.err.println("Falha ao executar o objetivo: " + e.getMessage());
             } finally {

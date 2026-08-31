@@ -15,7 +15,17 @@ spring:
           temperature: 0.2
 
 agent:
+  ui: console                                    # console | swing | none
   workspace-path: ${user.home}/agent-workspace   # repo Git de teste
+  journey-path: ${user.home}/.onboarding-agent-journey.properties
   max-replans: 2
   max-retries: 2
   confidence-threshold: 0.5
+
+# Necessario apenas para abrir pull requests (FASE 7).
+# O token pode vir da variavel de ambiente GITHUB_TOKEN.
+github:
+  api-url: https://api.github.com
+  owner: ""
+  repo: ""
+  token: ${GITHUB_TOKEN:}

@@ -66,7 +66,7 @@ class GitCommandsIntegrationTest {
                 new GitStatusCommand(gitClient),
                 new GitBranchCommand(gitClient),
                 new GitCheckoutCommand(gitClient),
-                new KnowledgeSearchCommand(new KnowledgeService()))),
+                new KnowledgeSearchCommand(new KnowledgeService(null, null)))),
                 new AgentEventPublisher(List.of()));
         ctx = new AgentContext(Goal.of("Quero criar uma branch feature/login"));
     }

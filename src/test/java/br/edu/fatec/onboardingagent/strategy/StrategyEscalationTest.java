@@ -82,7 +82,7 @@ class StrategyEscalationTest {
                 new GitStatusCommand(gitClient),
                 new GitBranchCommand(gitClient),
                 new GitCheckoutCommand(gitClient),
-                new KnowledgeSearchCommand(new KnowledgeService())));
+                new KnowledgeSearchCommand(new KnowledgeService(null, null))));
     }
 
     private AgentStateMachine montar(LlmGateway llm, StrategySelector[] saida, String... respostasDoHumano) {

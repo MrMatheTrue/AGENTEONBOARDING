@@ -21,6 +21,7 @@ spring:
 agent:
   ui: none
   workspace-path: ${java.io.tmpdir}/agent-workspace-test
+  journey-path: ${java.io.tmpdir}/agent-journey-test.properties
   max-replans: 2
   max-retries: 2
   confidence-threshold: 0.5

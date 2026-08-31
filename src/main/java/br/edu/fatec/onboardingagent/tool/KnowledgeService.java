@@ -1,7 +1,16 @@
 package br.edu.fatec.onboardingagent.tool;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.ai.document.Document;
+import org.springframework.ai.vectorstore.SearchRequest;
+import org.springframework.ai.vectorstore.VectorStore;
+import org.springframework.core.io.Resource;
 import org.springframework.stereotype.Component;
 
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -10,14 +19,19 @@ import java.util.Map;
 /**
  * RECEIVER da busca na base de conhecimento de Git/GitHub.
  *
- * <p>Na FASE 2 e um stub em memoria: um mapa de conceitos com busca por palavra-chave.
- * Na FASE 7 o mesmo contrato passa a consultar um VectorStore — quem chama
- * (KnowledgeSearchCommand) nao muda.</p>
+ * <p>Consulta o banco vetorial (RAG). Se o modelo de embeddings nao estiver disponivel —
+ * o llama.cpp precisa ter sido subido com suporte a embeddings, e nem todo modelo tem —,
+ * cai no acervo em memoria. O agente continua ensinando de qualquer jeito; o que muda e a
+ * qualidade da busca, nao a existencia dela.</p>
+ *
+ * <p>A ingestao e preguicosa e acontece uma unica vez, na primeira consulta.</p>
  */
 @Component
 public class KnowledgeService {
 
-    /** Conceito -> explicacao curta, em portugues, no tom de quem esta ensinando. */
+    private static final Logger log = LoggerFactory.getLogger(KnowledgeService.class);
+
+    /** Acervo de reserva, usado quando o banco vetorial nao esta disponivel. */
     private static final Map<String, String> CONCEITOS = new LinkedHashMap<>();
 
     static {
@@ -51,36 +65,119 @@ public class KnowledgeService {
                 "git clone baixa um repositorio remoto inteiro, com todo o historico, para a sua maquina.");
     }
 
+    private final VectorStore vectorStore;
+    private final Resource documento;
+
+    /** Estados possiveis da ingestao, para nao tentar de novo a cada busca. */
+    private enum Ingestao {
+        PENDENTE, PRONTA, INDISPONIVEL
+    }
+
+    private Ingestao ingestao = Ingestao.PENDENTE;
+
+    public KnowledgeService(VectorStore vectorStore, Resource knowledgeDocument) {
+        this.vectorStore = vectorStore;
+        this.documento = knowledgeDocument;
+    }
+
     /**
-     * Busca conceitos cujo titulo ou explicacao contenham os termos da pergunta.
+     * Busca explicacoes para a pergunta.
      *
-     * @return explicacoes encontradas, ou lista vazia quando nada casa
+     * @return trechos encontrados, ou lista vazia quando nada casa
      */
     public List<String> search(String query) {
         if (query == null || query.isBlank()) {
             return List.of();
         }
-        String pergunta = normalizar(query);
+
+        if (garantirIngestao()) {
+            try {
+                List<Document> achados = vectorStore.similaritySearch(
+                        SearchRequest.builder().query(query).topK(3).build());
+                if (achados != null && !achados.isEmpty()) {
+                    return achados.stream().map(Document::getText).toList();
+                }
+            } catch (Exception e) {
+                log.warn("Busca vetorial falhou ({}). Usando o acervo em memoria.", e.getMessage());
+            }
+        }
+        return buscarNoAcervo(query);
+    }
+
+    /** Conceitos do acervo de reserva, usados para dizer o que o agente sabe ensinar. */
+    public List<String> allConcepts() {
+        return List.copyOf(CONCEITOS.keySet());
+    }
+
+    /** Indica se a busca esta usando o banco vetorial ou o acervo em memoria. */
+    public boolean usandoBancoVetorial() {
+        return ingestao == Ingestao.PRONTA;
+    }
+
+    // -------------------------------------------------------------- ingestao
+
+    private boolean garantirIngestao() {
+        if (ingestao != Ingestao.PENDENTE) {
+            return ingestao == Ingestao.PRONTA;
+        }
+        if (vectorStore == null || documento == null) {
+            // Sem banco vetorial configurado: o acervo em memoria assume desde o inicio.
+            ingestao = Ingestao.INDISPONIVEL;
+            return false;
+        }
+        try {
+            List<Document> documentos = fatiarPorSecao();
+            vectorStore.add(documentos);
+            ingestao = Ingestao.PRONTA;
+            log.info("Base de conhecimento ingerida: {} trecho(s)", documentos.size());
+        } catch (Exception e) {
+            // Tipico: o llama.cpp nao expoe /v1/embeddings para o modelo carregado.
+            ingestao = Ingestao.INDISPONIVEL;
+            log.warn("Nao foi possivel montar o banco vetorial ({}). O agente segue com o acervo em memoria.",
+                    e.getMessage());
+        }
+        return ingestao == Ingestao.PRONTA;
+    }
+
+    /**
+     * Quebra o markdown em um documento por secao ({@code ## titulo}).
+     *
+     * <p>Fatiar por secao, e nao por numero de caracteres, mantem cada trecho com um
+     * assunto so — que e o que faz a busca devolver resposta util em vez de meio paragrafo.</p>
+     */
+    private List<Document> fatiarPorSecao() throws IOException {
+        String texto = new String(documento.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+        List<Document> documentos = new ArrayList<>();
+
+        for (String secao : texto.split("(?m)^## ")) {
+            String trecho = secao.strip();
+            if (trecho.isEmpty() || trecho.startsWith("# ")) {
+                continue;
+            }
+            String titulo = trecho.lines().findFirst().orElse("").strip();
+            documentos.add(new Document(trecho, Map.of("secao", titulo)));
+        }
+        return documentos;
+    }
+
+    // ---------------------------------------------------------- acervo local
+
+    private List<String> buscarNoAcervo(String query) {
+        String pergunta = query.toLowerCase(Locale.ROOT).trim();
 
         List<String> achados = CONCEITOS.entrySet().stream()
-                .filter(e -> pergunta.contains(e.getKey()) || normalizar(e.getValue()).contains(pergunta))
+                .filter(e -> pergunta.contains(e.getKey())
+                        || e.getValue().toLowerCase(Locale.ROOT).contains(pergunta))
                 .map(e -> "%s: %s".formatted(e.getKey(), e.getValue()))
                 .toList();
-
         if (!achados.isEmpty()) {
             return achados;
         }
 
-        // Nada casou pela chave inteira: tenta palavra a palavra, para perguntas em frase.
         return CONCEITOS.entrySet().stream()
                 .filter(e -> temPalavraEmComum(pergunta, e.getKey()))
                 .map(e -> "%s: %s".formatted(e.getKey(), e.getValue()))
                 .toList();
-    }
-
-    /** Todos os conceitos da base, usado para mostrar o que o agente sabe ensinar. */
-    public List<String> allConcepts() {
-        return List.copyOf(CONCEITOS.keySet());
     }
 
     private static boolean temPalavraEmComum(String pergunta, String chave) {
@@ -90,9 +187,5 @@ public class KnowledgeService {
             }
         }
         return false;
-    }
-
-    private static String normalizar(String texto) {
-        return texto.toLowerCase(Locale.ROOT).trim();
     }
 }

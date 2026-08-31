@@ -97,7 +97,7 @@ class ObserverTest {
                                   LlmGateway llm, String... respostasDoHumano) {
         TraceObserver trace = new TraceObserver();
         ErrorObserver erros = new ErrorObserver();
-        AgentEventPublisher publisher = new AgentEventPublisher(List.of(trace, erros, new ProgressObserver()));
+        AgentEventPublisher publisher = new AgentEventPublisher(List.of(trace, erros, new ProgressObserver(System.getProperty("java.io.tmpdir") + "/journey-observer-test.properties")));
 
         CommandRegistry registry = new CommandRegistry(comandos);
         StrategySelector selector = new StrategySelector(
