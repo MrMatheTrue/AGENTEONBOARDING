@@ -3,6 +3,8 @@ package br.edu.fatec.onboardingagent.state;
 import br.edu.fatec.onboardingagent.command.CommandInvoker;
 import br.edu.fatec.onboardingagent.command.CommandRegistry;
 import br.edu.fatec.onboardingagent.domain.AgentContext;
+import br.edu.fatec.onboardingagent.observer.AgentEvent;
+import br.edu.fatec.onboardingagent.observer.AgentEventPublisher;
 import br.edu.fatec.onboardingagent.strategy.StrategySelector;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -34,25 +36,28 @@ public class AgentStateMachine {
     private final CommandInvoker invoker;
     private final CommandRegistry registry;
     private final StrategySelector selector;
+    private final AgentEventPublisher publisher;
     private final int maxRetries;
     private final int maxReplans;
 
     /**
      * Trilha dos estados percorridos.
      *
-     * <p>Andaime da FASE 3, para o teste conferir a sequencia. Na FASE 5 quem passa a
-     * registrar a trilha e o TraceObserver, ouvindo os eventos StateChanged.</p>
+     * <p>Mantida para os testes de sequencia. A trilha narrada, com raciocinio e motivo de
+     * escalonamento, e responsabilidade do TraceObserver, que ouve os StateChanged.</p>
      */
     private final List<String> trail = new ArrayList<>();
 
     public AgentStateMachine(CommandInvoker invoker,
                              CommandRegistry registry,
                              StrategySelector selector,
+                             AgentEventPublisher publisher,
                              @Value("${agent.max-retries:2}") int maxRetries,
                              @Value("${agent.max-replans:2}") int maxReplans) {
         this.invoker = invoker;
         this.registry = registry;
         this.selector = selector;
+        this.publisher = publisher;
         this.maxRetries = maxRetries;
         this.maxReplans = maxReplans;
     }
@@ -77,7 +82,7 @@ public class AgentStateMachine {
 
     private AgentState runFrom(AgentState start, AgentContext ctx) {
         AgentState current = start;
-        registrar(current);
+        registrar(null, current);
 
         int transicoes = 0;
         while (!(current instanceof CompletedState)) {
@@ -86,11 +91,14 @@ public class AgentStateMachine {
             if (proximo == current) {
                 // Sem progresso: fim de linha por bloqueio (esperando o humano).
                 log.info("Maquina pausada em {}", current.name());
+                ctx.pendingEscalation().ifPresent(sinal ->
+                        publisher.publish(new AgentEvent.UserApprovalRequired(sinal)));
                 return current;
             }
 
+            String anterior = current.name();
             current = proximo;
-            registrar(current);
+            registrar(anterior, current);
 
             if (++transicoes > LIMITE_DE_TRANSICOES) {
                 throw new IllegalStateException(
@@ -98,12 +106,14 @@ public class AgentStateMachine {
                                 .formatted(LIMITE_DE_TRANSICOES, trail));
             }
         }
+        publisher.publish(new AgentEvent.GoalCompleted(ctx.goal(), ctx));
         return current;
     }
 
-    private void registrar(AgentState estado) {
+    private void registrar(String anterior, AgentState estado) {
         trail.add(estado.name());
         log.info("Estado: {}", estado.name());
+        publisher.publish(new AgentEvent.StateChanged(anterior, estado.name()));
     }
 
     // ------------------------------------------------------------- acessores
@@ -124,6 +134,11 @@ public class AgentStateMachine {
     /** Context do Strategy: quem os estados consultam para saber a estrategia ativa. */
     public StrategySelector selector() {
         return selector;
+    }
+
+    /** Subject do Observer, para os estados publicarem o que fazem. */
+    public AgentEventPublisher publisher() {
+        return publisher;
     }
 
     int maxRetries() {

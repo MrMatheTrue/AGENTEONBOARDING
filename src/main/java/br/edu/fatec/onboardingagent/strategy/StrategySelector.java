@@ -2,6 +2,8 @@ package br.edu.fatec.onboardingagent.strategy;
 
 import br.edu.fatec.onboardingagent.domain.AgentContext;
 import br.edu.fatec.onboardingagent.domain.EscalationSignal;
+import br.edu.fatec.onboardingagent.observer.AgentEvent;
+import br.edu.fatec.onboardingagent.observer.AgentEventPublisher;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -24,16 +26,19 @@ public class StrategySelector {
     private final ReActStrategy reAct;
     private final PlanThenExecuteStrategy planThenExecute;
     private final HumanInTheLoopStrategy humanInTheLoop;
+    private final AgentEventPublisher publisher;
 
     /** A unica estrategia ativa. Trocar esta referencia e a essencia do padrao aqui. */
     private AgentStrategy active;
 
     public StrategySelector(ReActStrategy reAct,
                             PlanThenExecuteStrategy planThenExecute,
-                            HumanInTheLoopStrategy humanInTheLoop) {
+                            HumanInTheLoopStrategy humanInTheLoop,
+                            AgentEventPublisher publisher) {
         this.reAct = reAct;
         this.planThenExecute = planThenExecute;
         this.humanInTheLoop = humanInTheLoop;
+        this.publisher = publisher;
         this.active = reAct;
     }
 
@@ -64,17 +69,21 @@ public class StrategySelector {
      */
     public AgentStrategy escalate(AgentContext ctx, EscalationSignal signal) {
         ctx.recordEscalation(signal);
+        String anterior = active.name();
         log.info("ESCALONAMENTO [{}] {} -> HumanInTheLoop | {}",
-                signal.reason(), active.name(), signal.questionToHuman());
+                signal.reason(), anterior, signal.questionToHuman());
         this.active = humanInTheLoop;
+        publisher.publish(new AgentEvent.StrategyEscalated(anterior, active.name(), signal));
         return this.active;
     }
 
     /** Humano respondeu: devolve o comando ao ReAct, com o contexto enriquecido. */
     public void deescalate(AgentContext ctx) {
-        log.info("DEESCALONAMENTO {} -> ReAct", active.name());
+        String anterior = active.name();
+        log.info("DEESCALONAMENTO {} -> ReAct", anterior);
         this.active = reAct;
         ctx.clearEscalation();
+        publisher.publish(new AgentEvent.StrategyDeescalated(anterior, active.name()));
     }
 
     public boolean isEscalated() {

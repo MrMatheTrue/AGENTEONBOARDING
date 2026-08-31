@@ -10,6 +10,7 @@ import br.edu.fatec.onboardingagent.domain.AgentContext;
 import br.edu.fatec.onboardingagent.domain.EscalationSignal;
 import br.edu.fatec.onboardingagent.domain.Goal;
 import br.edu.fatec.onboardingagent.llm.LlmGateway;
+import br.edu.fatec.onboardingagent.observer.AgentEventPublisher;
 import br.edu.fatec.onboardingagent.state.AgentState;
 import br.edu.fatec.onboardingagent.state.AgentStateMachine;
 import br.edu.fatec.onboardingagent.tool.GitClient;
@@ -86,12 +87,15 @@ class StrategyEscalationTest {
 
     private AgentStateMachine montar(LlmGateway llm, StrategySelector[] saida, String... respostasDoHumano) {
         BufferedReader humano = new BufferedReader(new StringReader(String.join("\n", respostasDoHumano)));
+        AgentEventPublisher publisher = new AgentEventPublisher(List.of());
         StrategySelector selector = new StrategySelector(
-                new ReActStrategy(llm, registry, 0.5, 2),
+                new ReActStrategy(llm, registry, publisher, 0.5, 2),
                 new PlanThenExecuteStrategy(llm, registry),
-                new HumanInTheLoopStrategy(registry, humano));
+                new HumanInTheLoopStrategy(registry, humano),
+                publisher);
         saida[0] = selector;
-        return new AgentStateMachine(new CommandInvoker(registry), registry, selector, 2, 2);
+        return new AgentStateMachine(new CommandInvoker(registry, publisher), registry, selector,
+                publisher, 2, 2);
     }
 
     // ------------------------------------------------------------- caso feliz

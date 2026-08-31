@@ -8,6 +8,7 @@ import br.edu.fatec.onboardingagent.domain.ExecutionResult;
 import br.edu.fatec.onboardingagent.domain.Goal;
 import br.edu.fatec.onboardingagent.domain.StepDecision;
 import br.edu.fatec.onboardingagent.llm.LlmGateway;
+import br.edu.fatec.onboardingagent.observer.AgentEventPublisher;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -51,15 +52,20 @@ class StrategySelectorTest {
         };
     }
 
+    private static AgentEventPublisher publisher() {
+        return new AgentEventPublisher(List.of());
+    }
+
     private static ReActStrategy reAct(String respostaDoModelo) {
-        return new ReActStrategy(llmQueResponde(respostaDoModelo), REGISTRY, 0.5, 2);
+        return new ReActStrategy(llmQueResponde(respostaDoModelo), REGISTRY, publisher(), 0.5, 2);
     }
 
     private static StrategySelector selector(ReActStrategy reAct) {
         return new StrategySelector(
                 reAct,
                 new PlanThenExecuteStrategy(llmQueResponde("{}"), REGISTRY),
-                new HumanInTheLoopStrategy(REGISTRY, new BufferedReader(new StringReader(""))));
+                new HumanInTheLoopStrategy(REGISTRY, new BufferedReader(new StringReader(""))),
+                publisher());
     }
 
     // ------------------------------------------------------- leitura da resposta
@@ -214,16 +220,23 @@ class StrategySelectorTest {
     }
 
     @Test
-    @DisplayName("ReAct para de replanejar quando o orcamento acaba")
+    @DisplayName("esgotado o orcamento de replanejamentos, o ReAct escala por REPLAN_LOOP (gatilho #3)")
     void reActRespeitaOLimiteDeReplanejamentos() {
         AgentContext ctx = new AgentContext(Goal.of("objetivo"));
         AgentStrategy react = reAct("{}");
         ExecutionResult falha = ExecutionResult.failure("deu ruim");
 
         assertThat(react.decideNext(ctx, falha)).isEqualTo(StepDecision.REPLAN);
+
         ctx.recordReplan();
         ctx.recordReplan();
-        assertThat(react.decideNext(ctx, falha)).isEqualTo(StepDecision.FAIL);
+
+        // Antes da FASE 5 isto era FAIL. Agora o ReAct reconhece que esta girando em falso
+        // e pede ajuda, em vez de empurrar a falha para o tratamento de erro.
+        assertThat(react.decideNext(ctx, falha)).isEqualTo(StepDecision.ESCALATE);
+        assertThat(react.escalationSignal(ctx)).get()
+                .extracting(EscalationSignal::reason)
+                .isEqualTo(EscalationSignal.Reason.REPLAN_LOOP);
     }
 
     @Test

@@ -4,6 +4,7 @@ import br.edu.fatec.onboardingagent.domain.AgentContext;
 import br.edu.fatec.onboardingagent.domain.ExecutionResult;
 import br.edu.fatec.onboardingagent.domain.Goal;
 import br.edu.fatec.onboardingagent.domain.PlanStep;
+import br.edu.fatec.onboardingagent.observer.impl.TraceObserver;
 import br.edu.fatec.onboardingagent.state.AgentState;
 import br.edu.fatec.onboardingagent.state.AgentStateMachine;
 import br.edu.fatec.onboardingagent.strategy.StrategySelector;
@@ -37,7 +38,8 @@ public class OnboardingAgentApplication {
      */
     @Bean
     @ConditionalOnProperty(name = "agent.console", havingValue = "true", matchIfMissing = true)
-    public CommandLineRunner consoleDoAgente(AgentStateMachine machine, StrategySelector selector) {
+    public CommandLineRunner consoleDoAgente(AgentStateMachine machine, StrategySelector selector,
+                                            TraceObserver trace) {
         return args -> {
             // Uma unica fonte de entrada para a sessao inteira. Criar outro BufferedReader
             // aqui faria os dois competirem pelo System.in, e a resposta ao escalonamento
@@ -79,18 +81,20 @@ public class OnboardingAgentApplication {
                     continue;
                 }
 
-                executar(machine, selector, linha);
+                executar(machine, selector, trace, linha);
             }
         };
     }
 
-    private void executar(AgentStateMachine machine, StrategySelector selector, String objetivo) {
+    private void executar(AgentStateMachine machine, StrategySelector selector,
+                          TraceObserver trace, String objetivo) {
         // Toda sessao comeca pelo planejador escolhido; um escalonamento pode troca-lo
         // no meio do caminho, e o deescalate o devolve.
         if (selector.isEscalated()) {
             selector.selectReAct();
         }
 
+        trace.limpar();
         AgentContext ctx = new AgentContext(Goal.of(objetivo));
         AgentState fim = machine.run(ctx);
 
@@ -119,7 +123,12 @@ public class OnboardingAgentApplication {
         ctx.escalationHistory().forEach(sinal ->
                 System.out.println("Escalonamento [" + sinal.reason() + "]: " + sinal.questionToHuman()));
 
+        System.out.printf("Trilha de aprendizado: %d%% concluida%n",
+                Math.round(ctx.journey().progress() * 100));
         System.out.println("Situacao final: " + fim.name());
         System.out.println("-".repeat(70));
+
+        // Aceite da FASE 5: a trilha de raciocinio, com o motivo de cada escalonamento.
+        trace.imprimir();
     }
 }

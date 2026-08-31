@@ -8,6 +8,7 @@ import br.edu.fatec.onboardingagent.domain.AgentContext;
 import br.edu.fatec.onboardingagent.domain.ExecutionResult;
 import br.edu.fatec.onboardingagent.domain.Goal;
 import br.edu.fatec.onboardingagent.domain.PlanStep;
+import br.edu.fatec.onboardingagent.observer.AgentEventPublisher;
 import br.edu.fatec.onboardingagent.tool.GitClient;
 import br.edu.fatec.onboardingagent.tool.KnowledgeService;
 import org.eclipse.jgit.api.Git;
@@ -65,7 +66,8 @@ class GitCommandsIntegrationTest {
                 new GitStatusCommand(gitClient),
                 new GitBranchCommand(gitClient),
                 new GitCheckoutCommand(gitClient),
-                new KnowledgeSearchCommand(new KnowledgeService()))));
+                new KnowledgeSearchCommand(new KnowledgeService()))),
+                new AgentEventPublisher(List.of()));
         ctx = new AgentContext(Goal.of("Quero criar uma branch feature/login"));
     }
 

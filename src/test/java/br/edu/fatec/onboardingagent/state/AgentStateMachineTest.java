@@ -9,6 +9,7 @@ import br.edu.fatec.onboardingagent.domain.ExecutionResult;
 import br.edu.fatec.onboardingagent.domain.Goal;
 import br.edu.fatec.onboardingagent.domain.PlanStep;
 import br.edu.fatec.onboardingagent.llm.LlmGateway;
+import br.edu.fatec.onboardingagent.observer.AgentEventPublisher;
 import br.edu.fatec.onboardingagent.strategy.HumanInTheLoopStrategy;
 import br.edu.fatec.onboardingagent.strategy.PlanThenExecuteStrategy;
 import br.edu.fatec.onboardingagent.strategy.ReActStrategy;
@@ -120,13 +121,16 @@ class AgentStateMachineTest {
                                    LlmGateway llm,
                                    String... respostasDoHumano) {
         CommandRegistry registry = new CommandRegistry(comandos);
+        AgentEventPublisher publisher = new AgentEventPublisher(List.of());
         StrategySelector selector = new StrategySelector(
-                new ReActStrategy(llm, registry, 0.5, maxReplans),
+                new ReActStrategy(llm, registry, publisher, 0.5, maxReplans),
                 new PlanThenExecuteStrategy(llm, registry),
                 new HumanInTheLoopStrategy(registry,
-                        new BufferedReader(new StringReader(String.join("\n", respostasDoHumano)))));
+                        new BufferedReader(new StringReader(String.join("\n", respostasDoHumano)))),
+                publisher);
         return new Montagem(
-                new AgentStateMachine(new CommandInvoker(registry), registry, selector, maxRetries, maxReplans),
+                new AgentStateMachine(new CommandInvoker(registry, publisher), registry, selector,
+                        publisher, maxRetries, maxReplans),
                 selector);
     }
 
