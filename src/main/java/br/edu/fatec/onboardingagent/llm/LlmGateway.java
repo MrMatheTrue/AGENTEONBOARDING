@@ -1,6 +1,8 @@
 package br.edu.fatec.onboardingagent.llm;
 
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.openai.OpenAiChatOptions;
+import org.springframework.ai.openai.api.ResponseFormat;
 import org.springframework.stereotype.Component;
 
 /**
@@ -12,6 +14,16 @@ import org.springframework.stereotype.Component;
  */
 @Component
 public class LlmGateway {
+
+    /**
+     * Forca o llama-server a restringir a amostragem a JSON valido (gramatica GBNF interna
+     * do llama.cpp). Modelos pequenos como o Gemma 2B erram o formato do plano com frequencia
+     * quando pedem apenas por instrucao no prompt; isso corta esse erro na origem, sem
+     * depender do modelo "obedecer" o pedido em texto livre.
+     */
+    private static final OpenAiChatOptions JSON_OPTIONS = OpenAiChatOptions.builder()
+            .responseFormat(ResponseFormat.builder().type(ResponseFormat.Type.JSON_OBJECT).build())
+            .build();
 
     private final ChatClient chatClient;
 
@@ -28,6 +40,7 @@ public class LlmGateway {
     public String complete(String prompt) {
         String resposta = chatClient.prompt()
                 .user(prompt)
+                .options(JSON_OPTIONS)
                 .call()
                 .content();
         return resposta == null ? "" : resposta;
